@@ -1,16 +1,31 @@
 # monitoring/prometheus.yml
 global:
   scrape_interval: 15s
+  evaluation_interval: 15s
 
 scrape_configs:
+  # API Gateway — nguồn metrics chính (http_requests_total, latency, custom)
   - job_name: "api-gateway"
+    metrics_path: /metrics
     static_configs:
       - targets: ["api-gateway:8000"]
 
-  - job_name: "kafka"
+  # Mock vLLM serving (thay Kaggle GPU) — có /metrics
+  - job_name: "mock-vllm"
+    metrics_path: /metrics
     static_configs:
-      - targets: ["kafka:9092"]
+      - targets: ["mock-vllm:8001"]
 
-  - job_name: "prefect-orion"
+  # Mock embedding service — có /metrics
+  - job_name: "mock-embed"
+    metrics_path: /metrics
     static_configs:
-      - targets: ["prefect-orion:4200"]
+      - targets: ["mock-embed:8002"]
+
+  # Prometheus tự giám sát chính nó
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Lưu ý: Prefect Orion KHÔNG expose metrics dạng Prometheus (trả JSON), nên
+  # không scrape ở đây. Theo dõi Prefect qua Prefect UI (http://localhost:4200).

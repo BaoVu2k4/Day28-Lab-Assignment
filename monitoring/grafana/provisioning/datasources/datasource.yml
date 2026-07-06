@@ -1,0 +1,11 @@
+# Tự động cấu hình Prometheus làm datasource mặc định của Grafana
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: lab28-prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true

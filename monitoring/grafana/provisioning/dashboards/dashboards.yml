@@ -1,0 +1,14 @@
+# Tự động load dashboard JSON từ /var/lib/grafana/dashboards
+apiVersion: 1
+
+providers:
+  - name: "lab28-dashboards"
+    orgId: 1
+    folder: "Lab28"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

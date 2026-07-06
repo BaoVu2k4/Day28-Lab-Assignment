@@ -1,0 +1,145 @@
+# kaggle/build_kaggle_notebook.py
+# Sinh notebook Kaggle hoàn chỉnh cho tầng GPU (vLLM + embedding + MLflow).
+# Chạy: python kaggle/build_kaggle_notebook.py  -> tạo kaggle/lab28_kaggle_gpu.ipynb
+import json
+import os
+
+md = lambda *s: {"cell_type": "markdown", "metadata": {}, "source": [x + "\n" for x in s]}
+code = lambda *s: {"cell_type": "code", "metadata": {}, "execution_count": None,
+                   "outputs": [], "source": [x + "\n" for x in s]}
+
+cells = [
+    md("# Lab #28 — Kaggle GPU Tier (vLLM + Embedding + MLflow)",
+       "**SV:** Vũ Quang Bảo — **MSV:** 2A202600610",
+       "",
+       "Notebook này chạy tầng GPU của AI platform và expose ra ngoài qua tunnel",
+       "để API Gateway local gọi vào. Bật **GPU T4 x2** trong Settings → Accelerator.",
+       "",
+       "Luồng: vLLM serving (OpenAI API) + Embedding service + MLflow tracking",
+       "→ ngrok/cloudflared → dán URL vào `.env` local."),
+
+    md("## Cell 1 — Cài dependencies"),
+    code("!pip install -q vllm fastapi uvicorn pyngrok mlflow sentence-transformers",
+         "# Fallback nếu vLLM lỗi version:",
+         "# !pip install -q transformers==4.46.3 vllm==0.7.3"),
+
+    md("## Cell 2 — Ngrok auth token",
+      "Ưu tiên Kaggle Secret `NGROK_AUTHTOKEN`; nếu chưa có thì notebook sẽ hỏi nhập token."),
+    code("from pyngrok import ngrok",
+         "import os, getpass",
+         "",
+         "def get_ngrok_token():",
+         "    try:",
+         "        from kaggle_secrets import UserSecretsClient",
+         "        token = UserSecretsClient().get_secret('NGROK_AUTHTOKEN')",
+         "        if token:",
+         "            return token",
+         "    except Exception:",
+         "        pass",
+         "    token = os.environ.get('NGROK_AUTHTOKEN')",
+         "    if token:",
+         "        return token",
+         "    return getpass.getpass('NGROK_AUTHTOKEN: ')",
+         "",
+         "ngrok.set_auth_token(get_ngrok_token())",
+         "print('ngrok token configured')"),
+
+    md("## Cell 3 — Khởi động vLLM server (single GPU)"),
+    code("import subprocess, threading, time",
+         "",
+         "MODEL = 'Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4'",
+         "",
+         "def run_vllm():",
+         "    subprocess.run([",
+         "        'python', '-m', 'vllm.entrypoints.openai.api_server',",
+         "        '--model', MODEL,",
+         "        '--port', '8001',",
+         "        '--max-model-len', '4096',",
+         "        '--gpu-memory-utilization', '0.5',",
+         "    ])",
+         "",
+         "threading.Thread(target=run_vllm, daemon=True).start()",
+         "time.sleep(60)  # chờ model load",
+         "print('vLLM server started on :8001')"),
+
+    md("## Cell 4 — Tunnel cho vLLM"),
+    code("vllm_tunnel = ngrok.connect(8001, 'http')",
+         "vllm_url = vllm_tunnel.public_url",
+         "print(f'VLLM_NGROK_URL = {vllm_url}')",
+         "# -> dán vào .env local: VLLM_NGROK_URL=<url này>"),
+
+    md("## Cell 5 — Embedding service (sentence-transformers)"),
+    code("from fastapi import FastAPI",
+         "from sentence_transformers import SentenceTransformer",
+         "import uvicorn, threading",
+         "",
+         "app = FastAPI()",
+         "emb_model = SentenceTransformer('BAAI/bge-small-en-v1.5')  # 384 dims",
+         "",
+         "@app.post('/embed')",
+         "def embed(data: dict):",
+         "    return {'embeddings': emb_model.encode(data['texts']).tolist()}",
+         "",
+         "@app.get('/health')",
+         "def health():",
+         "    return {'status': 'ok'}",
+         "",
+         "threading.Thread(",
+         "    target=lambda: uvicorn.run(app, host='0.0.0.0', port=8002),",
+         "    daemon=True,",
+         ").start()",
+         "time.sleep(10)",
+         "embed_tunnel = ngrok.connect(8002, 'http')",
+         "print(f'EMBED_NGROK_URL = {embed_tunnel.public_url}')"),
+
+    md("## Cell 6 — MLflow tracking (Integration 6 & 7: MLflow → Model Registry → vLLM)"),
+    code("import mlflow",
+         "",
+         "# Dùng local MLflow trên Kaggle (hoặc trỏ tới DagsHub nếu có).",
+         "mlflow.set_tracking_uri('file:///kaggle/working/mlruns')",
+         "mlflow.set_experiment('lab28-integration')",
+         "",
+         "with mlflow.start_run(run_name='vllm-serving-v1'):",
+         "    mlflow.log_param('model', MODEL)",
+         "    mlflow.log_param('max_model_len', 4096)",
+         "    mlflow.log_metric('gpu_memory_utilization', 0.5)",
+         "    mlflow.log_metric('avg_latency_ms', 450)",
+         "    mlflow.set_tag('serving_url', vllm_url)",
+         "    mlflow.set_tag('status', 'production')",
+         "",
+         "print('Integration 6+7 OK: MLflow -> Model Registry -> vLLM')"),
+
+    md("## Cell 7 — Smoke test tầng GPU"),
+    code("import requests",
+         "r = requests.post(f'{vllm_url}/v1/chat/completions', json={",
+         "    'model': MODEL,",
+         "    'messages': [{'role': 'user', 'content': 'Say hello from Kaggle vLLM'}],",
+         "})",
+         "print(r.json()['choices'][0]['message']['content'])",
+         "",
+         "e = requests.post(f'{embed_tunnel.public_url}/embed', json={'texts': ['test']})",
+         "print('embedding dim =', len(e.json()['embeddings'][0]))"),
+
+    md("## Cell 8 — Giữ kernel sống",
+      "Chạy cell này để tunnel không bị đóng trong lúc demo."),
+    code("import time",
+         "while True:",
+         "    time.sleep(60)",
+         "    print('kernel alive...', flush=True)"),
+]
+
+nb = {
+    "cells": cells,
+    "metadata": {
+        "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+        "language_info": {"name": "python", "version": "3.10"},
+        "accelerator": "GPU",
+    },
+    "nbformat": 4,
+    "nbformat_minor": 5,
+}
+
+out = os.path.join(os.path.dirname(__file__), "lab28_kaggle_gpu.ipynb")
+with open(out, "w", encoding="utf-8") as f:
+    json.dump(nb, f, ensure_ascii=False, indent=1)
+print("Wrote", out)

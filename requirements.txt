@@ -1,0 +1,16 @@
+# Host-side dependencies để chạy scripts + smoke tests
+# Cài: pip install -r requirements.txt
+# LƯU Ý: dùng kafka-python-ng (fork tương thích Python 3.12+); kafka-python
+# gốc 2.0.2 lỗi 'kafka.vendor.six.moves' trên Python 3.12.
+kafka-python-ng==2.2.3
+pandas==2.1.4
+pyarrow==14.0.2
+redis==5.0.1
+qdrant-client==1.7.0
+requests==2.31.0
+pytest==7.4.4
+python-dotenv==1.0.0
+langsmith==0.9.2
+# Prefect 2.14 is used inside Docker (Python 3.10). On Python 3.12,
+# installing the host client pulls pendulum 2.x, which needs distutils.
+prefect==2.14.0; python_version < "3.12"
